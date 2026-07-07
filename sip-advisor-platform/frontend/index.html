@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RupeeVyze | AI SIP Advisor</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<div class="app-shell">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">RV</span>
+      <span class="brand-name">RupeeVyze</span>
+    </div>
+    <nav class="nav">
+      <button class="nav-item active" data-tab="overview">Overview</button>
+      <button class="nav-item" data-tab="clients">Client 360</button>
+      <button class="nav-item" data-tab="reports">Reports</button>
+      <button class="nav-item" data-tab="reminders">Reminders</button>
+      <button class="nav-item" data-tab="analytics">Analytics</button>
+      <button class="nav-item" data-tab="assistant">AI Assistant</button>
+    </nav>
+  </aside>
+
+  <main class="content">
+
+    <!-- OVERVIEW -->
+    <section id="tab-overview" class="tab active">
+      <h1>Dashboard overview</h1>
+      <div class="stat-grid" id="stat-grid"></div>
+
+      <div class="panel-row">
+        <div class="panel">
+          <h2>Clients needing attention</h2>
+          <table class="data-table" id="attention-table">
+            <thead><tr><th>Investor</th><th>Scheme</th><th>Risk</th><th>Recommendation</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- CLIENT 360 -->
+    <section id="tab-clients" class="tab">
+      <h1>Client 360</h1>
+      <div class="search-bar">
+        <input type="text" id="client-search-input" placeholder="Search by Investor Name, UCC, or Folio Number...">
+        <button id="client-search-btn">Search</button>
+      </div>
+      <div id="client-results" class="client-results"></div>
+      <div id="client-profile" class="client-profile"></div>
+    </section>
+
+    <!-- REPORTS -->
+    <section id="tab-reports" class="tab">
+      <h1>Report generation</h1>
+
+      <div class="panel-row">
+        <div class="panel">
+          <h2>Individual client report</h2>
+          <input type="text" id="report-ucc" placeholder="Enter UCC (e.g. UCC1001)">
+          <div class="btn-row">
+            <button data-report="individual" data-format="excel">Download Excel</button>
+            <button data-report="individual" data-format="pdf">Download PDF</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Combined report</h2>
+          <select id="combined-scope">
+            <option value="all">All clients</option>
+            <option value="scheme">By scheme</option>
+            <option value="branch">By bank/branch</option>
+          </select>
+          <input type="text" id="combined-value" placeholder="Scheme or bank name (if applicable)">
+          <div class="date-row">
+            <label>Start <input type="text" id="date-start" placeholder="dd-mm-yyyy"></label>
+            <label>End <input type="text" id="date-end" placeholder="dd-mm-yyyy"></label>
+          </div>
+          <div class="btn-row">
+            <button data-report="combined" data-format="excel">Download Excel</button>
+            <button data-report="combined" data-format="pdf">Download PDF</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- REMINDERS -->
+    <section id="tab-reminders" class="tab">
+      <h1>Reminder management</h1>
+      <div class="reminder-config">
+        <label>Remind clients due within
+          <input type="number" id="reminder-days" value="2" min="1" max="10">
+          day(s)
+        </label>
+        <button id="reminder-refresh">Refresh</button>
+      </div>
+      <table class="data-table" id="reminder-table">
+        <thead><tr><th>Investor</th><th>Scheme</th><th>Amount</th><th>Due date</th><th>Days left</th><th>Message preview</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- ANALYTICS -->
+    <section id="tab-analytics" class="tab">
+      <h1>Analytics</h1>
+      <div class="chart-grid">
+        <div class="chart-card"><h2>Active vs missed SIPs</h2><canvas id="chart-status"></canvas></div>
+        <div class="chart-card"><h2>Risk distribution</h2><canvas id="chart-risk"></canvas></div>
+        <div class="chart-card"><h2>Scheme distribution</h2><canvas id="chart-scheme"></canvas></div>
+        <div class="chart-card"><h2>Monthly SIP registrations</h2><canvas id="chart-trend"></canvas></div>
+      </div>
+    </section>
+
+    <!-- ASSISTANT -->
+    <section id="tab-assistant" class="tab">
+      <h1>AI Assistant</h1>
+      <p class="hint">Try: "show SIPs due tomorrow", "show missed SIPs", "show high risk clients", "show premium clients"</p>
+      <div class="search-bar">
+        <input type="text" id="assistant-input" placeholder="Ask a question about your SIP data...">
+        <button id="assistant-btn">Ask</button>
+      </div>
+      <div id="assistant-answer" class="assistant-answer"></div>
+      <table class="data-table" id="assistant-table">
+        <thead><tr><th>Investor</th><th>Scheme</th><th>Amount</th><th>Status</th><th>Risk</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+  </main>
+</div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
