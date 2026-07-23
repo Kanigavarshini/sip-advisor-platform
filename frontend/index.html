@@ -18,6 +18,7 @@
     </div>
     <nav class="nav">
       <button class="nav-item active" data-tab="overview">Overview</button>
+      <button class="nav-item" data-tab="leads">Leads</button>
       <button class="nav-item" data-tab="clients">Client 360</button>
       <button class="nav-item" data-tab="reports">Reports</button>
       <button class="nav-item" data-tab="reminders">Reminders</button>
@@ -31,6 +32,26 @@
     <!-- OVERVIEW -->
     <section id="tab-overview" class="tab active">
       <h1>Dashboard overview</h1>
+
+      <div class="panel upload-panel">
+        <h2>Upload dataset</h2>
+        <p class="hint">Replace the SIP data with a new Excel file. The dashboard refreshes automatically once it's processed.</p>
+        <div class="upload-row">
+          <input type="file" id="dataset-file-input" accept=".xlsx,.xls">
+          <button id="dataset-upload-btn">Upload &amp; Refresh</button>
+        </div>
+        <div id="upload-status" class="upload-status"></div>
+      </div>
+
+      <div class="panel upload-panel">
+        <div class="proposals-header">
+          <h2>Add a single client</h2>
+          <button id="add-client-toggle-btn" onclick="toggleAddClientForm()">+ Add Client</button>
+        </div>
+        <p class="hint">Register one new client directly, without preparing a whole Excel sheet.</p>
+        <div id="add-client-form-container"></div>
+      </div>
+
       <div class="stat-grid" id="stat-grid"></div>
 
       <div class="panel-row">
@@ -41,7 +62,50 @@
             <tbody></tbody>
           </table>
         </div>
+        <div class="panel">
+          <h2>Leads needing attention</h2>
+          <table class="data-table" id="lead-attention-table">
+            <thead><tr><th>Lead</th><th>Priority</th><th>Status</th><th>Recommendation</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
+    </section>
+
+    <!-- LEADS -->
+    <section id="tab-leads" class="tab">
+      <h1>Leads</h1>
+
+      <div class="stat-grid" id="lead-stat-grid"></div>
+
+      <div class="panel">
+        <div class="proposals-header">
+          <h2>Pipeline</h2>
+          <button id="new-lead-btn" onclick="openLeadForm()">+ New Lead</button>
+        </div>
+        <div id="lead-form-container"></div>
+
+        <div class="lead-filters">
+          <input type="text" id="lead-search-input" placeholder="Search name, phone or email...">
+          <select id="lead-filter-status">
+            <option value="">All statuses</option>
+          </select>
+          <select id="lead-filter-priority">
+            <option value="">All priorities</option>
+          </select>
+          <select id="lead-filter-source">
+            <option value="">All sources</option>
+          </select>
+          <button id="lead-filter-btn">Filter</button>
+        </div>
+
+        <table class="data-table" id="leads-table">
+          <thead><tr><th>Name</th><th>Phone</th><th>Source</th><th>Status</th><th>Priority</th><th>Assigned</th><th>Next follow-up</th><th>AI suggestion</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div id="lead-detail" class="lead-detail"></div>
     </section>
 
     <!-- CLIENT 360 -->
@@ -113,6 +177,7 @@
         <div class="chart-card"><h2>Risk distribution</h2><canvas id="chart-risk"></canvas></div>
         <div class="chart-card"><h2>Scheme distribution</h2><canvas id="chart-scheme"></canvas></div>
         <div class="chart-card"><h2>Monthly SIP registrations</h2><canvas id="chart-trend"></canvas></div>
+        <div class="chart-card"><h2>Lead pipeline funnel</h2><canvas id="chart-lead-funnel"></canvas></div>
       </div>
     </section>
 
