@@ -74,9 +74,20 @@ REQUIRED_COLUMNS = [
     "SIP Start Date", "Start End Date",
 ]
 
+# Columns present in the *enriched* dataset this platform itself produces
+# (e.g. sip_advisor_enriched_preview.xlsx, or a full DB export). If someone
+# re-uploads that file instead of the original raw mock dataset, we should
+# still accept it rather than failing on "missing required columns".
+ENRICHED_COLUMNS = [
+    "sr_no", "ucc", "investor_name", "holding_type", "folio_no", "bank_details",
+    "sip_no", "sip_submission_date", "scheme", "sip_start_date", "sip_end_date",
+    "sip_amount", "frequency", "next_due_date", "days_to_due", "missed_count",
+    "status", "risk_level", "is_premium", "last_transaction_date", "needs_reminder",
+]
+
 
 class DatasetValidationError(Exception):
-    """Raised when an uploaded file doesn't match the expected schema."""
+    """Raised when an uploaded file doesn't match either supported schema."""
     pass
 
 
@@ -90,6 +101,67 @@ def load_raw_data(path: str) -> pd.DataFrame:
             f"Uploaded file is missing required column(s): {', '.join(missing)}"
         )
     return df
+
+
+def load_dataset_flexible(path: str):
+    """
+    Reads an uploaded Excel file and figures out which of the two supported
+    schemas it's in:
+      - "raw"      -> the original RupeeVyze_SIP_Mock_Dataset.xlsx style file
+                       (Sr.No, UCC, Investor Name, ... Start End Date)
+      - "enriched" -> a file this platform already produced (e.g. someone
+                       re-uploads sip_advisor_enriched_preview.xlsx, or a
+                       full export of the sips table)
+    Returns (kind, dataframe). Raises DatasetValidationError if neither
+    schema matches.
+    """
+    df = pd.read_excel(path)
+    df.columns = [str(c).strip() for c in df.columns]
+    columns = set(df.columns)
+
+    if set(REQUIRED_COLUMNS).issubset(columns):
+        return "raw", df
+    if set(ENRICHED_COLUMNS).issubset(columns):
+        return "enriched", df
+
+    missing_raw = [c for c in REQUIRED_COLUMNS if c not in columns]
+    raise DatasetValidationError(
+        "This file doesn't match a supported format. Upload either the "
+        "original SIP dataset (with columns like UCC, Investor Name, "
+        f"Scheme, etc. -- missing: {', '.join(missing_raw)}), or a dataset "
+        "previously exported from this dashboard."
+    )
+
+
+def normalize_enriched_dataset(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Cleans up a re-uploaded enriched dataset so it saves into `sips` with
+    the exact same column order/types the bulk-ingestion path produces --
+    no re-simulation needed, since the amounts/status/risk are already there.
+    """
+    out = df[ENRICHED_COLUMNS].copy()
+
+    def as_date_str(v):
+        if hasattr(v, "strftime"):
+            return v.strftime(DATE_FMT)
+        return str(v).strip()
+
+    for col in ("sip_submission_date", "sip_start_date", "sip_end_date",
+                "next_due_date", "last_transaction_date"):
+        out[col] = out[col].apply(as_date_str)
+
+    out["sr_no"] = pd.to_numeric(out["sr_no"], errors="coerce").fillna(0).astype(int)
+    out["sip_amount"] = pd.to_numeric(out["sip_amount"], errors="coerce").fillna(0).round().astype(int)
+    out["days_to_due"] = pd.to_numeric(out["days_to_due"], errors="coerce").fillna(0).astype(int)
+    out["missed_count"] = pd.to_numeric(out["missed_count"], errors="coerce").fillna(0).astype(int)
+    out["is_premium"] = out["is_premium"].astype(bool)
+    out["needs_reminder"] = out["needs_reminder"].astype(bool)
+
+    for col in ("ucc", "investor_name", "holding_type", "folio_no", "bank_details",
+                "sip_no", "scheme", "frequency", "status", "risk_level"):
+        out[col] = out[col].astype(str).str.strip()
+
+    return out
 
 
 def simulate_amount(scheme: str, rng: random.Random) -> int:
@@ -243,15 +315,24 @@ def run_ingestion(raw_file_path: str = None) -> dict:
     Used both by the CLI entrypoint (main) and by the /api/dataset/upload
     route, so uploading a new dataset through the dashboard does exactly
     the same thing as running this script manually.
+
+    Accepts either the original raw mock-dataset format, or a previously
+    exported enriched dataset from this platform -- both are detected
+    automatically via load_dataset_flexible().
     """
     raw_file_path = raw_file_path or DEFAULT_RAW_FILE
-    raw_df = load_raw_data(raw_file_path)
-    enriched_df = build_enriched_dataset(raw_df)
+    kind, df = load_dataset_flexible(raw_file_path)
+
+    if kind == "raw":
+        enriched_df = build_enriched_dataset(df)
+    else:
+        enriched_df = normalize_enriched_dataset(df)
+
     save_to_sqlite(enriched_df, DB_FILE)
     enriched_df.to_excel(ENRICHED_PREVIEW_FILE, index=False)
 
     return {
-        "records_loaded": len(raw_df),
+        "records_loaded": len(enriched_df),
         "status_breakdown": enriched_df["status"].value_counts().to_dict(),
         "risk_breakdown": enriched_df["risk_level"].value_counts().to_dict(),
         "due_soon_count": int(enriched_df["needs_reminder"].sum()),
