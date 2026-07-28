@@ -31,6 +31,7 @@ through the dashboard, with no command line needed.
 """
 
 import os
+import re
 import sqlite3
 import random
 from datetime import datetime
@@ -105,16 +106,23 @@ def load_raw_data(path: str) -> pd.DataFrame:
 
 def load_dataset_flexible(path: str):
     """
-    Reads an uploaded Excel file and figures out which of the two supported
-    schemas it's in:
+    Reads an uploaded Excel file and figures out which of the three
+    supported schemas it's in:
+      - "client_report" -> a real RM-exported "SIP Status Report" (e.g.
+                            SIPStatusReport_....xls straight from the AMC/RTA
+                            portal) -- has a title row, slightly different
+                            column names, slash dates, and real amounts.
       - "raw"      -> the original RupeeVyze_SIP_Mock_Dataset.xlsx style file
                        (Sr.No, UCC, Investor Name, ... Start End Date)
       - "enriched" -> a file this platform already produced (e.g. someone
                        re-uploads sip_advisor_enriched_preview.xlsx, or a
                        full export of the sips table)
-    Returns (kind, dataframe). Raises DatasetValidationError if neither
-    schema matches.
+    Returns (kind, dataframe). Raises DatasetValidationError if none match.
     """
+    client_df = load_client_report(path)
+    if client_df is not None:
+        return "client_report", client_df
+
     df = pd.read_excel(path)
     df.columns = [str(c).strip() for c in df.columns]
     columns = set(df.columns)
@@ -128,9 +136,198 @@ def load_dataset_flexible(path: str):
     raise DatasetValidationError(
         "This file doesn't match a supported format. Upload either the "
         "original SIP dataset (with columns like UCC, Investor Name, "
-        f"Scheme, etc. -- missing: {', '.join(missing_raw)}), or a dataset "
-        "previously exported from this dashboard."
+        f"Scheme, etc. -- missing: {', '.join(missing_raw)}), a client SIP "
+        "Status Report, or a dataset previously exported from this "
+        "dashboard."
     )
+
+
+# ---------------------------------------------------------------------------
+# Real client "SIP Status Report" support (e.g. SIPStatusReport_*.xls) --
+# these come straight from the AMC/RTA portal and have a title row above the
+# real header, slightly different column names ("Sr No.", "Folio No.",
+# "SIP End Date"), slash-formatted dates, and real installment amounts/status
+# that the mock dataset doesn't have.
+# ---------------------------------------------------------------------------
+
+_COLUMN_ALIASES = {
+    "sr no": "Sr.No",
+    "ucc": "UCC",
+    "investor name": "Investor Name",
+    "demat physical": "Demat/Physical",
+    "folio no": "Folio No",
+    "bank details": "Bank Details",
+    "sip no": "SIP No",
+    "sip submission date": "SIP Submission Date",
+    "scheme": "Scheme",
+    "sip start date": "SIP Start Date",
+    "sip end date": "Start End Date",
+    "start end date": "Start End Date",
+    "no of installments": "No of Installments",
+    "frequency": "Frequency",
+    "investment amt": "Investment Amt",
+    "installment amt": "Installment Amt",
+    "sip status": "SIP Status",
+    "sip stop cancellation date": "SIP Stop/Cancellation Date",
+    "reason": "Reason",
+    "is top up sip": "Is Top Up SIP",
+}
+
+
+def _normalize_key(value) -> str:
+    s = str(value).strip().lower()
+    s = s.replace("/", " ")
+    s = re.sub(r"[.\s]+", " ", s).strip()
+    return s
+
+
+def _rename_report_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [_COLUMN_ALIASES.get(_normalize_key(c), str(c).strip()) for c in df.columns]
+    return df
+
+
+def _find_header_row(headerless_df: pd.DataFrame, max_scan: int = 10):
+    """Scans the first few rows for the one that looks like the real column
+    header (has both a UCC-like and an Investor-Name-like cell), to skip
+    past a report title row such as 'SIP Status Report'."""
+    for i in range(min(max_scan, len(headerless_df))):
+        row_keys = [_normalize_key(v) for v in headerless_df.iloc[i].tolist()]
+        if "ucc" in row_keys and "investor name" in row_keys:
+            return i
+    return None
+
+
+def _normalize_date_cell(value) -> str:
+    """Converts an Excel datetime, dd/mm/yyyy, or dd-mm-yyyy cell into the
+    platform's canonical dd-mm-yyyy string. Returns "" for blank/placeholder
+    cells (NaN, '-', ' ')."""
+    if value is None:
+        return ""
+    if hasattr(value, "strftime"):
+        return value.strftime(DATE_FMT)
+    s = str(value).strip()
+    if not s or s in ("-", "nan", "NaT"):
+        return ""
+    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(s, fmt).strftime(DATE_FMT)
+        except ValueError:
+            continue
+    return ""
+
+
+def load_client_report(path: str):
+    """
+    Reads a real RM-exported SIP Status Report if the file matches that
+    shape; returns None (not an error) if it doesn't, so the caller can fall
+    through to trying the other two formats.
+    """
+    try:
+        headerless = pd.read_excel(path, header=None)
+    except Exception:
+        return None
+
+    header_row = _find_header_row(headerless)
+    if header_row is None:
+        return None
+
+    df = pd.read_excel(path, header=header_row)
+    df = _rename_report_columns(df)
+
+    if "UCC" not in df.columns or set(REQUIRED_COLUMNS) - set(df.columns):
+        return None
+
+    # Drop footer/summary rows (e.g. a trailing "Total" row) and any fully
+    # blank rows -- real reports append a totals line with no UCC.
+    df = df[df["UCC"].notna()].copy()
+    df = df[df["UCC"].astype(str).str.strip() != ""].copy()
+    if df.empty:
+        return None
+
+    # UCC often comes through as a float (e.g. 4405693.0) since the column
+    # has no other non-numeric values for pandas to infer a string dtype
+    # from. Clean it up to a plain string id.
+    def _clean_ucc(v):
+        s = str(v).strip()
+        if s.endswith(".0"):
+            s = s[:-2]
+        return s
+
+    df["UCC"] = df["UCC"].apply(_clean_ucc)
+
+    for date_col in ("SIP Submission Date", "SIP Start Date", "Start End Date"):
+        df[date_col] = df[date_col].apply(_normalize_date_cell)
+    if "SIP Stop/Cancellation Date" in df.columns:
+        df["SIP Stop/Cancellation Date"] = df["SIP Stop/Cancellation Date"].apply(_normalize_date_cell)
+
+    # Drop any row still missing a usable start/end date after normalization
+    # -- keeps one bad row from failing the whole upload.
+    df = df[(df["SIP Start Date"] != "") & (df["Start End Date"] != "")].copy()
+
+    df["Sr.No"] = range(1, len(df) + 1)
+    df = df.reset_index(drop=True)
+    return df
+
+
+def enrich_client_report_row(r, rng: random.Random) -> dict:
+    """
+    Like enrich_row(), but for a real SIP Status Report row: uses the real
+    installment amount, frequency, and stop/cancellation info when present,
+    only falling back to simulation for fields the report genuinely doesn't
+    contain (e.g. individual missed-installment history).
+    """
+    sip_start = datetime.strptime(str(r["SIP Start Date"]), DATE_FMT)
+    sip_end = datetime.strptime(str(r["Start End Date"]), DATE_FMT)
+
+    real_amount = pd.to_numeric(r.get("Installment Amt"), errors="coerce")
+    amount = int(real_amount) if pd.notna(real_amount) and real_amount > 0 else simulate_amount(r["Scheme"], rng)
+
+    frequency = str(r.get("Frequency") or "").strip().title() or "Monthly"
+
+    stop_date = str(r.get("SIP Stop/Cancellation Date") or "").strip()
+    report_status = str(r.get("SIP Status") or "").strip().lower()
+    was_stopped = bool(stop_date) or "cancel" in report_status or "reject" in report_status
+
+    missed_count = 4 if was_stopped else simulate_missed_count(rng)
+    status = derive_status(sip_end, missed_count, REFERENCE_DATE)
+    if was_stopped and status != "Completed":
+        status = "Missed"
+    risk_level = derive_risk_level(missed_count)
+
+    next_due = compute_next_due_date(sip_start, REFERENCE_DATE)
+    days_to_due = (next_due - REFERENCE_DATE).days
+    last_txn = next_due - relativedelta(months=1)
+
+    return {
+        "sr_no": r["Sr.No"],
+        "ucc": r["UCC"],
+        "investor_name": r["Investor Name"],
+        "holding_type": r["Demat/Physical"],
+        "folio_no": r["Folio No"],
+        "bank_details": r["Bank Details"],
+        "sip_no": r["SIP No"],
+        "sip_submission_date": r["SIP Submission Date"],
+        "scheme": r["Scheme"],
+        "sip_start_date": r["SIP Start Date"],
+        "sip_end_date": r["Start End Date"],
+        "sip_amount": amount,
+        "frequency": frequency,
+        "next_due_date": next_due.strftime(DATE_FMT),
+        "days_to_due": days_to_due,
+        "missed_count": missed_count,
+        "status": status,
+        "risk_level": risk_level,
+        "is_premium": amount >= PREMIUM_THRESHOLD,
+        "last_transaction_date": last_txn.strftime(DATE_FMT),
+        "needs_reminder": 0 <= days_to_due <= REMINDER_DAYS_BEFORE,
+    }
+
+
+def build_enriched_dataset_from_client_report(df: pd.DataFrame, seed: int = 42) -> pd.DataFrame:
+    rng = random.Random(seed)
+    rows = [enrich_client_report_row(r, rng) for _, r in df.iterrows()]
+    return pd.DataFrame(rows)
 
 
 def normalize_enriched_dataset(df: pd.DataFrame) -> pd.DataFrame:
@@ -325,6 +522,8 @@ def run_ingestion(raw_file_path: str = None) -> dict:
 
     if kind == "raw":
         enriched_df = build_enriched_dataset(df)
+    elif kind == "client_report":
+        enriched_df = build_enriched_dataset_from_client_report(df)
     else:
         enriched_df = normalize_enriched_dataset(df)
 

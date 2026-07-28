@@ -18,7 +18,7 @@ from services.ingestion import run_ingestion, add_manual_client, DatasetValidati
 dataset_bp = Blueprint("dataset", __name__)
 
 ALLOWED_EXTENSIONS = {".xlsx", ".xls"}
-UPLOAD_TARGET = os.path.join(DATA_DIR, "RupeeVyze_SIP_Mock_Dataset.xlsx")
+UPLOAD_TARGET_BASE = os.path.join(DATA_DIR, "RupeeVyze_SIP_Mock_Dataset")
 
 
 @dataset_bp.route("/api/dataset/upload", methods=["POST"])
@@ -34,14 +34,17 @@ def upload_dataset():
     if ext not in ALLOWED_EXTENSIONS:
         return jsonify({"error": "Please upload an Excel file (.xlsx or .xls)"}), 400
 
-    # Save a backup of the previous file in case the new one fails validation
-    backup_path = UPLOAD_TARGET + ".backup"
-    if os.path.exists(UPLOAD_TARGET):
-        os.replace(UPLOAD_TARGET, backup_path)
+    # Keep the file's real extension (.xls vs .xlsx) so it's always read with
+    # the correct Excel engine -- saving an .xls file under a .xlsx name (or
+    # vice versa) can trip up the reader depending on the pandas/engine version.
+    upload_target = UPLOAD_TARGET_BASE + ext
+    backup_path = upload_target + ".backup"
+    if os.path.exists(upload_target):
+        os.replace(upload_target, backup_path)
 
     try:
-        file.save(UPLOAD_TARGET)
-        summary = run_ingestion(UPLOAD_TARGET)
+        file.save(upload_target)
+        summary = run_ingestion(upload_target)
         # Success -- remove the backup, no longer needed
         if os.path.exists(backup_path):
             os.remove(backup_path)
@@ -52,11 +55,11 @@ def upload_dataset():
     except DatasetValidationError as e:
         # Restore the previous working file so the dashboard doesn't break
         if os.path.exists(backup_path):
-            os.replace(backup_path, UPLOAD_TARGET)
+            os.replace(backup_path, upload_target)
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         if os.path.exists(backup_path):
-            os.replace(backup_path, UPLOAD_TARGET)
+            os.replace(backup_path, upload_target)
         return jsonify({"error": f"Could not process file: {str(e)}"}), 500
 
 
