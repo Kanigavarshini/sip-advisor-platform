@@ -16,11 +16,11 @@ reports_bp = Blueprint("reports", __name__)
 @reports_bp.route("/api/reports/individual/<ucc>", methods=["GET"])
 def individual_report(ucc):
     fmt = request.args.get("format", "excel")
-    row = query_one("SELECT * FROM sips WHERE ucc = ?", (ucc,))
-    if not row:
+    rows = query("SELECT * FROM sips WHERE ucc = ?", (ucc,))
+    if not rows:
         return jsonify({"error": "Client not found"}), 404
 
-    path = build_report([row], scope=f"individual_{ucc}", fmt=fmt)
+    path = build_report(rows, scope=f"individual_{ucc}", fmt=fmt)
     return send_file(path, as_attachment=True)
 
 

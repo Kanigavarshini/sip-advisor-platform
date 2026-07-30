@@ -306,7 +306,7 @@ def enrich_client_report_row(r, rng: random.Random) -> dict:
         "holding_type": r["Demat/Physical"],
         "folio_no": r["Folio No"],
         "bank_details": r["Bank Details"],
-        "sip_no": r["SIP No"],
+        "sip_no": _ensure_sip_no(r["SIP No"], r["UCC"], r["Sr.No"]),
         "sip_submission_date": r["SIP Submission Date"],
         "scheme": r["Scheme"],
         "sip_start_date": r["SIP Start Date"],
@@ -358,6 +358,11 @@ def normalize_enriched_dataset(df: pd.DataFrame) -> pd.DataFrame:
                 "sip_no", "scheme", "frequency", "status", "risk_level"):
         out[col] = out[col].astype(str).str.strip()
 
+    out["sip_no"] = [
+        _ensure_sip_no(sip_no, ucc, sr_no)
+        for sip_no, ucc, sr_no in zip(out["sip_no"], out["ucc"], out["sr_no"])
+    ]
+
     return out
 
 
@@ -395,6 +400,19 @@ def derive_risk_level(missed_count: int) -> str:
     return "Low"
 
 
+def _ensure_sip_no(value, ucc, sr_no) -> str:
+    """
+    Guarantees a non-blank sip_no, since it's used as the upsert key when
+    appending an upload to the existing dataset. Real client reports
+    sometimes leave this blank/'-' for a row; without a fallback, several
+    such rows would all collide under the same blank key.
+    """
+    s = str(value).strip()
+    if s and s.lower() not in ("nan", "none", "-"):
+        return s
+    return f"AUTO-{ucc}-{sr_no}"
+
+
 def enrich_row(r, rng: random.Random) -> dict:
     """
     Builds one enriched `sips` row (dict of DB column -> value) from one raw
@@ -420,13 +438,7 @@ def enrich_row(r, rng: random.Random) -> dict:
         "holding_type": r["Demat/Physical"],
         "folio_no": r["Folio No"],
         "bank_details": r["Bank Details"],
-        "sip_no": r["SIP No"],
-        "sip_submission_date": r["SIP Submission Date"],
-        "scheme": r["Scheme"],
-        "sip_start_date": r["SIP Start Date"],
-        "sip_end_date": r["Start End Date"],
-        "sip_amount": amount,
-        "frequency": "Monthly",
+        "sip_no": _ensure_sip_no(r["SIP No"], r["UCC"], r["Sr.No"]),
         "next_due_date": next_due.strftime(DATE_FMT),
         "days_to_due": days_to_due,
         "missed_count": missed_count,
@@ -445,9 +457,25 @@ def build_enriched_dataset(raw_df: pd.DataFrame, seed: int = 42) -> pd.DataFrame
 
 
 MANUAL_REQUIRED_FIELDS = [
-    "UCC", "Investor Name", "Demat/Physical", "Folio No", "Bank Details",
-    "SIP No", "SIP Submission Date", "Scheme", "SIP Start Date", "Start End Date",
+    "Investor Name", "Demat/Physical", "Bank Details",
+    "Scheme", "SIP Submission Date", "SIP Start Date", "Start End Date",
 ]
+
+# These are genuinely useful but not always known at the moment an RM is
+# registering a client on the spot -- auto-generated if left blank.
+MANUAL_OPTIONAL_FIELDS = ["UCC", "Folio No", "SIP No"]
+
+
+def _generate_ucc() -> str:
+    return f"NEWCL{random.randint(100000, 999999)}"
+
+
+def _generate_folio_no() -> str:
+    return f"AUTO-{random.randint(10000000, 99999999)}"
+
+
+def _generate_sip_no() -> str:
+    return f"AUTO-SIP-{random.randint(100000, 999999)}"
 
 
 def add_manual_client(fields: dict) -> dict:
@@ -456,6 +484,11 @@ def add_manual_client(fields: dict) -> dict:
     needing a full Excel re-upload. This APPENDS one row to the existing
     `sips` table (unlike a bulk Excel upload, which replaces the whole
     table), so the rest of the dataset is left untouched.
+
+    UCC, Folio No, and SIP No are optional -- a client can already exist
+    with other SIPs under the same UCC (one investor can hold several SIPs),
+    and if UCC itself isn't known yet it's auto-generated so the record can
+    still be created and reconciled with the real UCC later.
     """
     missing = [c for c in MANUAL_REQUIRED_FIELDS if not str(fields.get(c, "")).strip()]
     if missing:
@@ -471,10 +504,16 @@ def add_manual_client(fields: dict) -> dict:
 
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
-    existing = conn.execute("SELECT 1 FROM sips WHERE ucc = ?", (fields["UCC"],)).fetchone()
+
+    ucc = str(fields.get("UCC", "")).strip() or _generate_ucc()
+    folio_no = str(fields.get("Folio No", "")).strip() or _generate_folio_no()
+    sip_no = str(fields.get("SIP No", "")).strip() or _generate_sip_no()
+
+    # Only sip_no needs to be unique -- a client (UCC) can hold multiple SIPs.
+    existing = conn.execute("SELECT 1 FROM sips WHERE sip_no = ?", (sip_no,)).fetchone()
     if existing:
         conn.close()
-        raise DatasetValidationError(f"A client with UCC '{fields['UCC']}' already exists")
+        raise DatasetValidationError(f"A SIP with SIP No '{sip_no}' already exists")
 
     max_sr_row = conn.execute("SELECT MAX(sr_no) AS m FROM sips").fetchone()
     max_sr = (max_sr_row["m"] or 0) if max_sr_row else 0
@@ -483,39 +522,93 @@ def add_manual_client(fields: dict) -> dict:
     # A fresh, non-deterministic seed per manual add so simulated amounts
     # don't collide with the deterministic bulk-upload sequence.
     rng = random.Random()
-    record = {"Sr.No": max_sr + 1, **{k: str(fields[k]).strip() for k in MANUAL_REQUIRED_FIELDS}}
+    record = {
+        "Sr.No": max_sr + 1,
+        "UCC": ucc,
+        "Investor Name": str(fields["Investor Name"]).strip(),
+        "Demat/Physical": str(fields["Demat/Physical"]).strip(),
+        "Folio No": folio_no,
+        "Bank Details": str(fields["Bank Details"]).strip(),
+        "SIP No": sip_no,
+        "SIP Submission Date": str(fields["SIP Submission Date"]).strip(),
+        "Scheme": str(fields["Scheme"]).strip(),
+        "SIP Start Date": str(fields["SIP Start Date"]).strip(),
+        "Start End Date": str(fields["Start End Date"]).strip(),
+    }
     enriched = enrich_row(record, rng)
 
     conn = sqlite3.connect(DB_FILE)
     columns = ", ".join(enriched.keys())
     placeholders = ", ".join("?" for _ in enriched)
     conn.execute(f"INSERT INTO sips ({columns}) VALUES ({placeholders})", tuple(enriched.values()))
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sip_no ON sips(sip_no)")
     conn.commit()
     conn.close()
 
     return enriched
 
 
-def save_to_sqlite(df: pd.DataFrame, db_path: str):
+def save_to_sqlite(df: pd.DataFrame, db_path: str, mode: str = "append"):
+    """
+    mode="replace": wipes and replaces the whole `sips` table. Only used by
+        the CLI baseline reset (python services/ingestion.py), to (re)seed a
+        clean demo dataset.
+    mode="append":  used by every dashboard upload. Each row is *upserted*
+        by `sip_no` -- if a SIP with that sip_no already exists, it's
+        updated in place; otherwise it's added as a new row. This means
+        uploading a second Excel file (even for a different batch of
+        clients) ADDS to the existing dataset instead of wiping it, and
+        re-uploading the same file twice doesn't create duplicates.
+    """
     conn = sqlite3.connect(db_path)
-    df.to_sql("sips", conn, if_exists="replace", index=False)
+
+    if mode == "replace" or not _table_exists(conn):
+        df.to_sql("sips", conn, if_exists="replace", index=False)
+    else:
+        # Offset sr_no so newly-added rows continue numbering after the
+        # existing dataset, instead of restarting at 1 and colliding.
+        max_sr_row = conn.execute("SELECT MAX(sr_no) AS m FROM sips").fetchone()
+        max_sr = (max_sr_row[0] or 0) if max_sr_row else 0
+        df = df.copy()
+        df["sr_no"] = range(max_sr + 1, max_sr + 1 + len(df))
+
+        cols = list(df.columns)
+        placeholders = ", ".join("?" for _ in cols)
+        col_list = ", ".join(cols)
+        for _, row in df.iterrows():
+            sip_no = row["sip_no"]
+            conn.execute("DELETE FROM sips WHERE sip_no = ?", (sip_no,))
+            conn.execute(f"INSERT INTO sips ({col_list}) VALUES ({placeholders})", tuple(row[c] for c in cols))
+
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ucc ON sips(ucc)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_investor ON sips(investor_name)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_folio ON sips(folio_no)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sip_no ON sips(sip_no)")
     conn.commit()
     conn.close()
 
 
-def run_ingestion(raw_file_path: str = None) -> dict:
+def _table_exists(conn) -> bool:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='sips'"
+    ).fetchone()
+    return row is not None
+
+
+def run_ingestion(raw_file_path: str = None, mode: str = "append") -> dict:
     """
     Runs the full ingestion pipeline and returns a summary dict.
-    Used both by the CLI entrypoint (main) and by the /api/dataset/upload
-    route, so uploading a new dataset through the dashboard does exactly
-    the same thing as running this script manually.
 
-    Accepts either the original raw mock-dataset format, or a previously
-    exported enriched dataset from this platform -- both are detected
-    automatically via load_dataset_flexible().
+    mode="append" (default, used by the /api/dataset/upload route): the
+        uploaded file's rows are added to whatever's already in the `sips`
+        table (upserted by sip_no), so uploading a second Excel file does
+        NOT erase the first one.
+    mode="replace" (used by the CLI baseline reset, `python
+        services/ingestion.py`): wipes and reloads a clean demo dataset.
+
+    Accepts any of the three supported upload formats -- raw mock dataset,
+    a real client SIP Status Report, or a previously exported enriched
+    dataset -- detected automatically via load_dataset_flexible().
     """
     raw_file_path = raw_file_path or DEFAULT_RAW_FILE
     kind, df = load_dataset_flexible(raw_file_path)
@@ -527,19 +620,26 @@ def run_ingestion(raw_file_path: str = None) -> dict:
     else:
         enriched_df = normalize_enriched_dataset(df)
 
-    save_to_sqlite(enriched_df, DB_FILE)
-    enriched_df.to_excel(ENRICHED_PREVIEW_FILE, index=False)
+    save_to_sqlite(enriched_df, DB_FILE, mode=mode)
+
+    # Preview export always reflects the FULL current dataset (not just the
+    # rows from this upload), since uploads accumulate rather than replace.
+    conn = sqlite3.connect(DB_FILE)
+    full_df = pd.read_sql("SELECT * FROM sips ORDER BY sr_no", conn)
+    conn.close()
+    full_df.to_excel(ENRICHED_PREVIEW_FILE, index=False)
 
     return {
         "records_loaded": len(enriched_df),
-        "status_breakdown": enriched_df["status"].value_counts().to_dict(),
-        "risk_breakdown": enriched_df["risk_level"].value_counts().to_dict(),
-        "due_soon_count": int(enriched_df["needs_reminder"].sum()),
+        "total_records": len(full_df),
+        "status_breakdown": full_df["status"].value_counts().to_dict(),
+        "risk_breakdown": full_df["risk_level"].value_counts().to_dict(),
+        "due_soon_count": int(full_df["needs_reminder"].sum()),
     }
 
 
 def main():
-    summary = run_ingestion()
+    summary = run_ingestion(mode="replace")
     print(f"Loaded {summary['records_loaded']} raw records")
     print(f"Wrote enriched dataset to {DB_FILE} (table: sips)")
     print(f"Preview Excel written to {ENRICHED_PREVIEW_FILE}")

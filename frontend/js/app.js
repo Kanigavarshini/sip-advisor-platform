@@ -62,7 +62,7 @@ async function uploadDataset() {
     }
 
     statusBox.className = "upload-status success";
-    statusBox.textContent = `${data.message} — ${data.summary.records_loaded} records loaded.`;
+    statusBox.textContent = `${data.message} — ${data.summary.records_loaded} SIP(s) added from this file (${data.summary.total_records} total in the dataset now).`;
     fileInput.value = "";
     loadOverview();
   } catch (err) {
@@ -87,7 +87,7 @@ function toggleAddClientForm() {
   container.innerHTML = `
     <div class="lead-form">
       <div class="form-row">
-        <input type="text" id="new-client-ucc" placeholder="UCC *">
+        <input type="text" id="new-client-ucc" placeholder="UCC (auto-generated if unknown)">
         <input type="text" id="new-client-name" placeholder="Investor name *">
         <select id="new-client-holding">
           <option>Demat</option>
@@ -95,9 +95,9 @@ function toggleAddClientForm() {
         </select>
       </div>
       <div class="form-row">
-        <input type="text" id="new-client-folio" placeholder="Folio No *">
+        <input type="text" id="new-client-folio" placeholder="Folio No (optional)">
         <input type="text" id="new-client-bank" placeholder="Bank details *">
-        <input type="text" id="new-client-sipno" placeholder="SIP No *">
+        <input type="text" id="new-client-sipno" placeholder="SIP No (optional)">
       </div>
       <div class="form-row">
         <select id="new-client-scheme">${CLIENT_SCHEMES.map(s => `<option>${s}</option>`).join("")}</select>
@@ -107,6 +107,7 @@ function toggleAddClientForm() {
       <div class="form-row">
         <input type="text" id="new-client-end-date" placeholder="SIP end date (dd-mm-yyyy) *">
       </div>
+      <p class="hint">Fields marked * are required. Leave UCC/Folio No/SIP No blank if not known yet -- they'll be auto-generated and can be reconciled later. If this UCC already exists, this adds another SIP under the same client instead of creating a duplicate.</p>
       <div class="btn-row">
         <button onclick="submitManualClient()">Add Client</button>
         <button onclick="document.getElementById('add-client-form-container').innerHTML=''">Cancel</button>
@@ -132,7 +133,11 @@ async function submitManualClient() {
     "Start End Date": document.getElementById("new-client-end-date").value.trim(),
   };
 
-  const missing = Object.entries(payload).filter(([, v]) => !v);
+  const REQUIRED_KEYS = [
+    "Investor Name", "Demat/Physical", "Bank Details", "Scheme",
+    "SIP Submission Date", "SIP Start Date", "Start End Date",
+  ];
+  const missing = REQUIRED_KEYS.filter(k => !payload[k]);
   if (missing.length) {
     statusBox.className = "upload-status error";
     statusBox.textContent = "Please fill in all required fields (marked *).";
@@ -155,7 +160,7 @@ async function submitManualClient() {
       return;
     }
     statusBox.className = "upload-status success";
-    statusBox.textContent = `${data.message}: ${data.client.investor_name} (${data.client.ucc}).`;
+    statusBox.textContent = `${data.message}: ${data.client.investor_name} (UCC ${data.client.ucc}, SIP No ${data.client.sip_no}).`;
     await loadOverview();
   } catch (err) {
     statusBox.className = "upload-status error";
@@ -240,22 +245,46 @@ async function showClientProfile(ucc) {
   profile.innerHTML = `
     <h2>${c.investor_name} <span style="font-weight:400;color:var(--text-secondary)">(${c.ucc})</span></h2>
     <div class="profile-grid">
-      <div class="profile-field"><div class="label">Folio No</div><div class="value">${c.folio_no}</div></div>
+      <div class="profile-field"><div class="label">Primary folio</div><div class="value">${c.folio_no}</div></div>
       <div class="profile-field"><div class="label">Holding type</div><div class="value">${c.holding_type}</div></div>
       <div class="profile-field"><div class="label">Bank details</div><div class="value">${c.bank_details}</div></div>
-      <div class="profile-field"><div class="label">Scheme</div><div class="value">${c.scheme}</div></div>
-      <div class="profile-field"><div class="label">SIP amount</div><div class="value">₹${c.sip_amount}</div></div>
-      <div class="profile-field"><div class="label">Frequency</div><div class="value">${c.frequency}</div></div>
-      <div class="profile-field"><div class="label">SIP start</div><div class="value">${c.sip_start_date}</div></div>
-      <div class="profile-field"><div class="label">SIP end</div><div class="value">${c.sip_end_date}</div></div>
+      <div class="profile-field"><div class="label">Number of SIPs</div><div class="value">${c.sip_count}</div></div>
+      <div class="profile-field"><div class="label">Total SIP amount</div><div class="value">₹${c.sip_amount}</div></div>
       <div class="profile-field"><div class="label">Next due</div><div class="value">${c.next_due_date} (${c.days_to_due}d)</div></div>
-      <div class="profile-field"><div class="label">Status</div><div class="value">${c.status}</div></div>
-      <div class="profile-field"><div class="label">Risk level</div><div class="value">${riskBadge(c.risk_level)}</div></div>
-      <div class="profile-field"><div class="label">Missed count</div><div class="value">${c.missed_count}</div></div>
+      <div class="profile-field"><div class="label">Overall status</div><div class="value">${c.status}</div></div>
+      <div class="profile-field"><div class="label">Highest risk</div><div class="value">${riskBadge(c.risk_level)}</div></div>
+      <div class="profile-field"><div class="label">Total missed installments</div><div class="value">${c.missed_count}</div></div>
       <div class="profile-field"><div class="label">Premium client</div><div class="value">${c.is_premium ? "Yes" : "No"}</div></div>
     </div>
     <div class="assistant-answer" style="display:block">
       <strong>AI recommendation:</strong> ${c.recommendation.action} — ${c.recommendation.reason}
+    </div>
+
+    <div class="proposals-section">
+      <div class="proposals-header">
+        <h2>SIPs held by this client (${c.sip_count})</h2>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Scheme</th><th>Folio No</th><th>Amount</th><th>Start</th><th>End</th><th>Next due</th><th>Status</th><th>Risk</th></tr>
+          </thead>
+          <tbody>
+            ${c.sips.map(s => `
+              <tr>
+                <td>${s.scheme}</td>
+                <td>${s.folio_no}</td>
+                <td>₹${s.sip_amount}</td>
+                <td>${s.sip_start_date}</td>
+                <td>${s.sip_end_date}</td>
+                <td>${s.next_due_date}</td>
+                <td>${s.status}</td>
+                <td>${riskBadge(s.risk_level)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <div class="proposals-section">

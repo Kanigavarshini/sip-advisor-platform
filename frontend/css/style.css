@@ -148,6 +148,11 @@ button:hover { opacity: 0.9; }
 }
 
 /* Tables */
+.table-wrap {
+  overflow-x: auto;
+  margin-bottom: 10px;
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;
