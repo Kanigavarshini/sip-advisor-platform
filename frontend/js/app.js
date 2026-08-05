@@ -62,8 +62,36 @@ async function uploadDataset() {
     }
 
     statusBox.className = "upload-status success";
-    statusBox.textContent = `${data.message} — ${data.summary.records_loaded} SIP(s) added from this file (${data.summary.total_records} total in the dataset now).`;
+    statusBox.textContent = `${data.message} ${data.summary.records_loaded} SIP(s) added from this file — ${data.summary.total_records} total in the dataset now.`;
     fileInput.value = "";
+    loadOverview();
+  } catch (err) {
+    statusBox.className = "upload-status error";
+    statusBox.textContent = "Something went wrong. Please try again.";
+  }
+}
+
+async function clearDataset() {
+  const statusBox = document.getElementById("upload-status");
+  if (!confirm(
+    "This will permanently delete ALL client/SIP data (including the 100 sample demo records, if still present, and any uploaded data). Leads and proposals are not affected. This can't be undone. Continue?"
+  )) {
+    return;
+  }
+
+  statusBox.className = "upload-status loading";
+  statusBox.textContent = "Clearing all client data...";
+
+  try {
+    const res = await fetch(`${API}/api/dataset/clear`, { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok) {
+      statusBox.className = "upload-status error";
+      statusBox.textContent = data.error || "Could not clear data.";
+      return;
+    }
+    statusBox.className = "upload-status success";
+    statusBox.textContent = data.message;
     loadOverview();
   } catch (err) {
     statusBox.className = "upload-status error";

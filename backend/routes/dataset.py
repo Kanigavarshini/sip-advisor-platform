@@ -12,8 +12,9 @@ reflects the new data right after upload.
 """
 
 import os
+import sqlite3
 from flask import Blueprint, request, jsonify
-from services.ingestion import run_ingestion, add_manual_client, DatasetValidationError, DATA_DIR
+from services.ingestion import run_ingestion, add_manual_client, DatasetValidationError, DATA_DIR, DB_FILE
 
 dataset_bp = Blueprint("dataset", __name__)
 
@@ -48,8 +49,15 @@ def upload_dataset():
         # Success -- remove the backup, no longer needed
         if os.path.exists(backup_path):
             os.remove(backup_path)
+        added = summary["records_loaded"]
+        total = summary["total_records"]
+        already_there = total - added
+        note = (
+            f" ({already_there} record(s) were already in the dataset before this upload.)"
+            if already_there > 0 else ""
+        )
         return jsonify({
-            "message": "Dataset uploaded and dashboard refreshed successfully",
+            "message": f"Dataset uploaded and dashboard refreshed successfully.{note}",
             "summary": summary,
         })
     except DatasetValidationError as e:
@@ -61,6 +69,21 @@ def upload_dataset():
         if os.path.exists(backup_path):
             os.replace(backup_path, upload_target)
         return jsonify({"error": f"Could not process file: {str(e)}"}), 500
+
+
+@dataset_bp.route("/api/dataset/clear", methods=["DELETE"])
+def clear_dataset():
+    """
+    Wipes ALL SIP/client records -- used to clear out demo/sample data (or
+    any earlier test uploads) before loading real client data for a clean
+    review. Does NOT touch leads, proposals, or client notes/activities,
+    since those are separate tables.
+    """
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute("DELETE FROM sips")
+    conn.commit()
+    conn.close()
+    return jsonify({"message": "All client/SIP data has been cleared. Upload a new dataset to get started."})
 
 
 @dataset_bp.route("/api/dataset/add-client", methods=["POST"])

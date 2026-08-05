@@ -34,8 +34,11 @@
       <h1>Dashboard overview</h1>
 
       <div class="panel upload-panel">
-        <h2>Upload dataset</h2>
-        <p class="hint">Add SIP data from a new Excel file -- it's added to what's already loaded, not replaced (uploading a second file for a different batch of clients keeps the first one too). Works with the original SIP dataset, a real client SIP Status Report, or a dataset previously exported from this dashboard.</p>
+        <div class="proposals-header">
+          <h2>Upload dataset</h2>
+          <button id="dataset-clear-btn" class="small-btn danger" onclick="clearDataset()">Clear all client data</button>
+        </div>
+        <p class="hint">Add SIP data from a new Excel file -- it's added to what's already loaded, not replaced (uploading a second file for a different batch of clients keeps the first one too). Works with the original SIP dataset, a real client SIP Status Report, or a dataset previously exported from this dashboard. Note: this project ships with 100 sample/demo records pre-loaded -- use "Clear all client data" first if you want to start from a clean, empty dataset before uploading real client data.</p>
         <div class="upload-row">
           <input type="file" id="dataset-file-input" accept=".xlsx,.xls">
           <button id="dataset-upload-btn">Upload &amp; Refresh</button>
