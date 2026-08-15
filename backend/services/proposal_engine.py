@@ -104,10 +104,6 @@ def list_proposals_for_client(ucc: str) -> list:
         p["recommendations"] = query(
             "SELECT * FROM proposal_recommendations WHERE proposal_id = ?", (p["proposal_id"],)
         )
-        p["attachments"] = query(
-            "SELECT id, file_name, file_type, uploaded_at FROM proposal_attachments WHERE proposal_id = ? ORDER BY uploaded_at DESC, id DESC",
-            (p["proposal_id"],)
-        )
     return proposals
 
 
@@ -132,10 +128,6 @@ def update_status(proposal_id: str, status: str, client_decision: str = None,
 
 def record_actual_investment(proposal_id: str, recommendation_id: int, actual_amount: float) -> dict:
     """Records what was actually invested against a specific recommendation line."""
-    if actual_amount < 0:
-        raise ValueError("actual_amount cannot be negative")
-    if not query_one("SELECT id FROM proposal_recommendations WHERE id = ? AND proposal_id = ?", (recommendation_id, proposal_id)):
-        raise ValueError("Recommendation line not found")
     conn = get_connection()
     conn.execute(
         "UPDATE proposal_recommendations SET actual_amount = ? WHERE id = ? AND proposal_id = ?",

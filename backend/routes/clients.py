@@ -45,10 +45,7 @@ def _aggregate_by_ucc(sip_rows: list) -> list:
         first = sips[0]
         total_amount = sum(s["sip_amount"] for s in sips)
         missed_total = sum(s["missed_count"] for s in sips)
-        # A client is considered missed when any SIP has a missed installment.
-        # This keeps the Client 360/Overview status consistent even when an
-        # imported row has a non-standard status label but missed_count > 0.
-        missed_sip_count = sum(1 for s in sips if int(s.get("missed_count") or 0) > 0 or s.get("status") == "Missed")
+        missed_sip_count = sum(1 for s in sips if s["status"] == "Missed")
         worst_risk = max((s["risk_level"] for s in sips), key=lambda r: RISK_RANK.get(r, 0))
         if missed_sip_count:
             overall_status = "Missed"
@@ -78,9 +75,35 @@ def _aggregate_by_ucc(sip_rows: list) -> list:
             "next_due_date": soonest.get("next_due_date"),
             "days_to_due": soonest.get("days_to_due"),
             "schemes": sorted({s["scheme"] for s in sips}),
+            "high_risk_schemes": sorted({s["scheme"] for s in sips if s["risk_level"] == "High"}),
+            "high_risk_sip_count": sum(1 for s in sips if s["risk_level"] == "High"),
             "sips": recommend_bulk(sips),
         })
     return clients
+
+
+@clients_bp.route("/api/clients/attention", methods=["GET"])
+def clients_needing_attention():
+    """
+    Aggregated version of the Overview "Clients needing attention" widget.
+    Each client (UCC) appears exactly ONCE here, even if they hold several
+    high-risk SIPs -- with a count/list of which specific schemes are
+    flagged, instead of listing the same person once per flagged SIP.
+    """
+    limit = int(request.args.get("limit", 10))
+    high_risk_uccs = [r["ucc"] for r in query("SELECT DISTINCT ucc FROM sips WHERE risk_level = 'High'")]
+    if not high_risk_uccs:
+        return jsonify([])
+
+    placeholders = ", ".join("?" for _ in high_risk_uccs)
+    rows = query(f"SELECT * FROM sips WHERE ucc IN ({placeholders})", tuple(high_risk_uccs))
+    clients = [c for c in _aggregate_by_ucc(rows) if c["risk_level"] == "High"]
+    clients.sort(key=lambda c: (c["high_risk_sip_count"], c["missed_count"]), reverse=True)
+
+    for c in clients:
+        c["recommendation"] = recommend_for_client(c)
+
+    return jsonify(clients[:limit])
 
 
 @clients_bp.route("/api/clients/search", methods=["GET"])
@@ -107,40 +130,6 @@ def get_client(ucc):
     client = _aggregate_by_ucc(rows)[0]
     client["recommendation"] = recommend_for_client(client)
     return jsonify(client)
-
-
-
-
-@clients_bp.route("/api/clients/attention", methods=["GET"])
-def clients_needing_attention():
-    """
-    Returns client-level attention items for the Overview dashboard.
-
-    The queue is intentionally based on the same transparent recommendation
-    engine used in Client 360: high/medium risk, missed SIPs, due-soon SIPs,
-    and premium-client handling are surfaced; healthy clients are excluded.
-    One row is returned per UCC so clients holding multiple SIPs are not
-    duplicated in the attention queue.
-    """
-    rows = query("SELECT * FROM sips ORDER BY ucc, sr_no")
-    clients = _aggregate_by_ucc(rows)
-    attention = []
-    for client in clients:
-        rec = recommend_for_client(client)
-        if rec["label"] == "Healthy":
-            continue
-        item = dict(client)
-        item["recommendation"] = rec
-        attention.append(item)
-
-    priority = {
-        "High risk": 1,
-        "Due soon": 2,
-        "Premium client": 3,
-        "Medium risk": 4,
-    }
-    attention.sort(key=lambda c: (priority.get(c["recommendation"]["label"], 9), c["investor_name"]))
-    return jsonify(attention[:25])
 
 
 @clients_bp.route("/api/clients", methods=["GET"])

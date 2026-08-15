@@ -116,11 +116,8 @@ def record_actual(proposal_id, rec_id):
     if actual_amount is None:
         return jsonify({"error": "actual_amount is required"}), 400
 
-    try:
-        proposal = proposal_engine.record_actual_investment(proposal_id, rec_id, float(actual_amount))
-        return jsonify(proposal)
-    except (ValueError, TypeError) as e:
-        return jsonify({"error": str(e)}), 400
+    proposal = proposal_engine.record_actual_investment(proposal_id, rec_id, actual_amount)
+    return jsonify(proposal)
 
 
 @proposals_bp.route("/api/proposals/<proposal_id>/attachments", methods=["POST"])

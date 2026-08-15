@@ -129,17 +129,6 @@ SIP dataset never wipes out real advisory history.
 
 
 
-## Review updates (August 2026)
-
-The latest review points are covered in the current build:
-
-- **Clients needing attention:** Overview now uses the same explainable recommendation rules as Client 360 and shows the reason plus recommended action. Healthy clients are excluded, and each UCC is shown once so multi-SIP clients are not duplicated.
-- **Missed status:** a non-completed SIP with one or more missed installments is now displayed as **Missed**. Risk remains severity-based: 1–2 missed installments are Medium risk and 3+ are High risk. Re-uploaded enriched datasets are normalized to the same rule.
-- **Proposals under Client 360:** proposal lists now load recommendation lines and attachments safely, version numbers are visible, actual investment entries are validated, and status-update errors are surfaced.
-- **Add new lead under Leads:** lead creation remains available from **+ New Lead**, with required name/phone validation and client-side follow-up date format validation before the API call.
-
-These updates correspond to the review pointers: “How Client needing attention is working?”, “How Missed Status is working?”, and detailed testing of Proposals under Client 360 and Add New Lead under Leads.
-
 ## How the raw dataset was enriched
 
 The original mock dataset only has registration-level fields (UCC, Investor

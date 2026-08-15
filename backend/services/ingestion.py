@@ -235,7 +235,17 @@ def load_client_report(path: str):
     df = pd.read_excel(path, header=header_row)
     df = _rename_report_columns(df)
 
+    # These columns exist ONLY in a real client SIP Status Report, not in the
+    # raw mock dataset -- checking for them (not just the shared columns) is
+    # what actually distinguishes the two formats. Without this, a raw mock
+    # file (which happens to contain every REQUIRED_COLUMNS name too) would
+    # be misdetected as a client report and silently processed with the
+    # wrong logic.
+    CLIENT_REPORT_DISTINCTIVE_COLUMNS = ["SIP Status", "Frequency", "Installment Amt"]
+
     if "UCC" not in df.columns or set(REQUIRED_COLUMNS) - set(df.columns):
+        return None
+    if set(CLIENT_REPORT_DISTINCTIVE_COLUMNS) - set(df.columns):
         return None
 
     # Drop footer/summary rows (e.g. a trailing "Total" row) and any fully
@@ -289,7 +299,12 @@ def enrich_client_report_row(r, rng: random.Random) -> dict:
     report_status = str(r.get("SIP Status") or "").strip().lower()
     was_stopped = bool(stop_date) or "cancel" in report_status or "reject" in report_status
 
-    missed_count = 4 if was_stopped else simulate_missed_count(rng)
+    # Real reports don't include a per-installment missed-payment history, so
+    # unlike the demo dataset (which simulates that noise on purpose), a real
+    # SIP the report shows as Approved/active should show as Active/Low here
+    # -- not be randomly marked Missed/High. We only mark it Missed when the
+    # report itself says the SIP was stopped/cancelled/rejected.
+    missed_count = 4 if was_stopped else 0
     status = derive_status(sip_end, missed_count, REFERENCE_DATE)
     if was_stopped and status != "Completed":
         status = "Missed"
@@ -351,13 +366,6 @@ def normalize_enriched_dataset(df: pd.DataFrame) -> pd.DataFrame:
     out["sip_amount"] = pd.to_numeric(out["sip_amount"], errors="coerce").fillna(0).round().astype(int)
     out["days_to_due"] = pd.to_numeric(out["days_to_due"], errors="coerce").fillna(0).astype(int)
     out["missed_count"] = pd.to_numeric(out["missed_count"], errors="coerce").fillna(0).astype(int)
-    # Keep re-uploaded enriched files consistent with the live status rule.
-    end_dates = pd.to_datetime(out["sip_end_date"], dayfirst=True, errors="coerce")
-    reference = pd.Timestamp(REFERENCE_DATE)
-    out["status"] = out["status"].astype(str).str.strip()
-    out.loc[end_dates <= reference, "status"] = "Completed"
-    out.loc[(end_dates > reference) & (out["missed_count"] > 0), "status"] = "Missed"
-    out.loc[(end_dates > reference) & (out["missed_count"] <= 0), "status"] = "Active"
     out["is_premium"] = out["is_premium"].astype(bool)
     out["needs_reminder"] = out["needs_reminder"].astype(bool)
 
@@ -392,12 +400,9 @@ def simulate_missed_count(rng: random.Random) -> int:
 
 
 def derive_status(end_date: datetime, missed_count: int, reference: datetime) -> str:
-    # Status answers "what is happening with this SIP now?"
-    # Any missed installment therefore makes the SIP Missed; the risk level
-    # still reflects severity (1-2 = Medium, 3+ = High).
     if end_date <= reference:
         return "Completed"
-    if missed_count > 0:
+    if missed_count >= 3:
         return "Missed"
     return "Active"
 
@@ -449,6 +454,12 @@ def enrich_row(r, rng: random.Random) -> dict:
         "folio_no": r["Folio No"],
         "bank_details": r["Bank Details"],
         "sip_no": _ensure_sip_no(r["SIP No"], r["UCC"], r["Sr.No"]),
+        "sip_submission_date": r["SIP Submission Date"],
+        "scheme": r["Scheme"],
+        "sip_start_date": r["SIP Start Date"],
+        "sip_end_date": r["Start End Date"],
+        "sip_amount": amount,
+        "frequency": "Monthly",
         "next_due_date": next_due.strftime(DATE_FMT),
         "days_to_due": days_to_due,
         "missed_count": missed_count,
