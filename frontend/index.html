@@ -59,9 +59,15 @@
 
       <div class="panel-row">
         <div class="panel">
-          <h2>Clients needing attention</h2>
+          <div class="section-title-row">
+            <div>
+              <h2>Clients needing attention</h2>
+              <p class="section-help">Priority queue from the same rule-based AI recommendation used in Client 360.</p>
+            </div>
+            <span class="info-badge">High risk · Missed · Due soon · Premium</span>
+          </div>
           <table class="data-table" id="attention-table">
-            <thead><tr><th>Investor</th><th>Scheme</th><th>Risk</th><th>Recommendation</th></tr></thead>
+            <thead><tr><th>Investor</th><th>Status</th><th>Risk</th><th>Why</th><th>Recommended action</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -72,6 +78,20 @@
             <tbody></tbody>
           </table>
         </div>
+      </div>
+
+      <div class="panel">
+        <div class="section-title-row">
+          <div>
+            <h2>Missed SIP status</h2>
+            <p class="section-help">A SIP is marked <strong>Missed</strong> when it has at least one missed installment and has not already completed.</p>
+          </div>
+          <span class="info-badge danger-info">Missed = attention required</span>
+        </div>
+        <table class="data-table" id="missed-table">
+          <thead><tr><th>Investor</th><th>Scheme</th><th>Missed installments</th><th>Status</th><th>Risk</th><th>Last transaction</th><th>Action</th></tr></thead>
+          <tbody></tbody>
+        </table>
       </div>
     </section>
 

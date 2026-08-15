@@ -593,3 +593,37 @@ button:hover { opacity: 0.9; }
 .note-item:last-child, .comm-item:last-child, .referral-item:last-child { border-bottom: none; }
 
 .item-meta { color: var(--text-secondary); font-size: 11px; margin-top: 2px; }
+
+
+/* Review-update helpers */
+.section-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.section-title-row h2 { margin-bottom: 2px; }
+.section-help {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.info-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: var(--accent-light);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.danger-info {
+  background: var(--danger-light);
+  color: var(--danger);
+}
+.client-attention-row { cursor: pointer; }
+.client-attention-row:hover { background: var(--surface-hover, #f6f7f8); }

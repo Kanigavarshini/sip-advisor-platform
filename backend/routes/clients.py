@@ -45,7 +45,10 @@ def _aggregate_by_ucc(sip_rows: list) -> list:
         first = sips[0]
         total_amount = sum(s["sip_amount"] for s in sips)
         missed_total = sum(s["missed_count"] for s in sips)
-        missed_sip_count = sum(1 for s in sips if s["status"] == "Missed")
+        # A client is considered missed when any SIP has a missed installment.
+        # This keeps the Client 360/Overview status consistent even when an
+        # imported row has a non-standard status label but missed_count > 0.
+        missed_sip_count = sum(1 for s in sips if int(s.get("missed_count") or 0) > 0 or s.get("status") == "Missed")
         worst_risk = max((s["risk_level"] for s in sips), key=lambda r: RISK_RANK.get(r, 0))
         if missed_sip_count:
             overall_status = "Missed"
@@ -104,6 +107,40 @@ def get_client(ucc):
     client = _aggregate_by_ucc(rows)[0]
     client["recommendation"] = recommend_for_client(client)
     return jsonify(client)
+
+
+
+
+@clients_bp.route("/api/clients/attention", methods=["GET"])
+def clients_needing_attention():
+    """
+    Returns client-level attention items for the Overview dashboard.
+
+    The queue is intentionally based on the same transparent recommendation
+    engine used in Client 360: high/medium risk, missed SIPs, due-soon SIPs,
+    and premium-client handling are surfaced; healthy clients are excluded.
+    One row is returned per UCC so clients holding multiple SIPs are not
+    duplicated in the attention queue.
+    """
+    rows = query("SELECT * FROM sips ORDER BY ucc, sr_no")
+    clients = _aggregate_by_ucc(rows)
+    attention = []
+    for client in clients:
+        rec = recommend_for_client(client)
+        if rec["label"] == "Healthy":
+            continue
+        item = dict(client)
+        item["recommendation"] = rec
+        attention.append(item)
+
+    priority = {
+        "High risk": 1,
+        "Due soon": 2,
+        "Premium client": 3,
+        "Medium risk": 4,
+    }
+    attention.sort(key=lambda c: (priority.get(c["recommendation"]["label"], 9), c["investor_name"]))
+    return jsonify(attention[:25])
 
 
 @clients_bp.route("/api/clients", methods=["GET"])

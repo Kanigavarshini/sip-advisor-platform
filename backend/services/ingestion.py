@@ -351,6 +351,13 @@ def normalize_enriched_dataset(df: pd.DataFrame) -> pd.DataFrame:
     out["sip_amount"] = pd.to_numeric(out["sip_amount"], errors="coerce").fillna(0).round().astype(int)
     out["days_to_due"] = pd.to_numeric(out["days_to_due"], errors="coerce").fillna(0).astype(int)
     out["missed_count"] = pd.to_numeric(out["missed_count"], errors="coerce").fillna(0).astype(int)
+    # Keep re-uploaded enriched files consistent with the live status rule.
+    end_dates = pd.to_datetime(out["sip_end_date"], dayfirst=True, errors="coerce")
+    reference = pd.Timestamp(REFERENCE_DATE)
+    out["status"] = out["status"].astype(str).str.strip()
+    out.loc[end_dates <= reference, "status"] = "Completed"
+    out.loc[(end_dates > reference) & (out["missed_count"] > 0), "status"] = "Missed"
+    out.loc[(end_dates > reference) & (out["missed_count"] <= 0), "status"] = "Active"
     out["is_premium"] = out["is_premium"].astype(bool)
     out["needs_reminder"] = out["needs_reminder"].astype(bool)
 
@@ -385,9 +392,12 @@ def simulate_missed_count(rng: random.Random) -> int:
 
 
 def derive_status(end_date: datetime, missed_count: int, reference: datetime) -> str:
+    # Status answers "what is happening with this SIP now?"
+    # Any missed installment therefore makes the SIP Missed; the risk level
+    # still reflects severity (1-2 = Medium, 3+ = High).
     if end_date <= reference:
         return "Completed"
-    if missed_count >= 3:
+    if missed_count > 0:
         return "Missed"
     return "Active"
 

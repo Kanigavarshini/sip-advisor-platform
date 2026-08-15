@@ -29,6 +29,11 @@ function leadStatusBadge(status) {
   return `<span class="badge badge-status">${status}</span>`;
 }
 
+function sipStatusBadge(status) {
+  const cls = status === "Missed" ? "badge-high" : status === "Completed" ? "badge-status" : "badge-low";
+  return `<span class="badge ${cls}">${status}</span>`;
+}
+
 // ---------- Dataset upload ----------
 document.getElementById("dataset-upload-btn").addEventListener("click", uploadDataset);
 
@@ -215,16 +220,31 @@ async function loadOverview() {
     <div class="stat-card"><div class="value">${leadSummary.conversion_rate_percent}%</div><div class="label">Lead conversion rate</div></div>
   `;
 
-  const highRisk = await fetch(`${API}/api/clients?risk_level=High`).then(r => r.json());
+  const attention = await fetch(`${API}/api/clients/attention`).then(r => r.json());
   const tbody = document.querySelector("#attention-table tbody");
-  tbody.innerHTML = highRisk.slice(0, 10).map(c => `
-    <tr>
-      <td>${c.investor_name}</td>
-      <td>${c.scheme}</td>
+  tbody.innerHTML = attention.slice(0, 10).map(c => `
+    <tr class="client-attention-row" onclick="goToClient('${c.ucc}')">
+      <td><strong>${c.investor_name}</strong><div class="hint">${c.ucc}</div></td>
+      <td>${sipStatusBadge(c.status)}</td>
       <td>${riskBadge(c.risk_level)}</td>
-      <td>${c.recommendation.action}</td>
+      <td>${c.recommendation.reason}</td>
+      <td class="ai-suggestion">${c.recommendation.action}</td>
     </tr>
-  `).join("") || `<tr><td colspan="4">No high-risk clients</td></tr>`;
+  `).join("") || `<tr><td colspan="5">No clients currently need attention.</td></tr>`;
+
+  const missed = await fetch(`${API}/api/clients?status=Missed`).then(r => r.json());
+  const missedBody = document.querySelector("#missed-table tbody");
+  missedBody.innerHTML = missed.slice(0, 15).map(s => `
+    <tr>
+      <td>${s.investor_name}<div class="hint">${s.ucc}</div></td>
+      <td>${s.scheme}</td>
+      <td><strong>${s.missed_count}</strong></td>
+      <td>${sipStatusBadge(s.status)}</td>
+      <td>${riskBadge(s.risk_level)}</td>
+      <td>${s.last_transaction_date || "—"}</td>
+      <td class="ai-suggestion">${s.recommendation.action}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="7">No missed SIPs.</td></tr>`;
 
   const hotLeads = await fetch(`${API}/api/leads?priority=Hot`).then(r => r.json());
   const leadTbody = document.querySelector("#lead-attention-table tbody");
@@ -279,7 +299,7 @@ async function showClientProfile(ucc) {
       <div class="profile-field"><div class="label">Number of SIPs</div><div class="value">${c.sip_count}</div></div>
       <div class="profile-field"><div class="label">Total SIP amount</div><div class="value">₹${c.sip_amount}</div></div>
       <div class="profile-field"><div class="label">Next due</div><div class="value">${c.next_due_date} (${c.days_to_due}d)</div></div>
-      <div class="profile-field"><div class="label">Overall status</div><div class="value">${c.status}</div></div>
+      <div class="profile-field"><div class="label">Overall status</div><div class="value">${sipStatusBadge(c.status)}</div></div>
       <div class="profile-field"><div class="label">Highest risk</div><div class="value">${riskBadge(c.risk_level)}</div></div>
       <div class="profile-field"><div class="label">Total missed installments</div><div class="value">${c.missed_count}</div></div>
       <div class="profile-field"><div class="label">Premium client</div><div class="value">${c.is_premium ? "Yes" : "No"}</div></div>
@@ -306,7 +326,7 @@ async function showClientProfile(ucc) {
                 <td>${s.sip_start_date}</td>
                 <td>${s.sip_end_date}</td>
                 <td>${s.next_due_date}</td>
-                <td>${s.status}</td>
+                <td>${sipStatusBadge(s.status)}${s.missed_count > 0 ? ` <span class="hint">(${s.missed_count} missed)</span>` : ""}</td>
                 <td>${riskBadge(s.risk_level)}</td>
               </tr>
             `).join("")}
@@ -546,6 +566,7 @@ async function loadProposals(ucc) {
   }
 
   list.innerHTML = proposals.map(p => {
+    const attachments = p.attachments || [];
     const recRows = p.recommendations.map(r => `
       <tr>
         <td>${r.scheme_name}</td>
@@ -568,7 +589,7 @@ async function loadProposals(ucc) {
             ${proposalStatusBadge(p.status)}
             <span class="decision-badge">${p.client_decision}</span>
           </div>
-          <div class="proposal-meta">${p.proposal_date} · by ${p.created_by}</div>
+          <div class="proposal-meta">${p.proposal_date} · by ${p.created_by} · Version ${p.version_number}</div>
         </div>
 
         <div class="proposal-purpose">${p.purpose}</div>
@@ -600,7 +621,7 @@ async function loadProposals(ucc) {
 
         <div class="attachments-row">
           <strong>Attachments:</strong>
-          ${p.attachments.map(a => `<a href="${API}/api/proposals/attachments/${a.id}/download" class="attachment-link">${a.file_name}</a>`).join(" ") || "<span class='hint'>None</span>"}
+          ${attachments.map(a => `<a href="${API}/api/proposals/attachments/${a.id}/download" class="attachment-link">${a.file_name}</a>`).join(" ") || "<span class='hint'>None</span>"}
           <input type="file" id="attach-file-${p.proposal_id}" class="attach-input">
           <select id="attach-type-${p.proposal_id}">
             <option>Proposal PDF</option><option>Excel Working</option>
@@ -696,22 +717,37 @@ async function saveStatus(proposalId) {
   const decision = document.getElementById(`decision-${proposalId}`).value;
   const reason = document.getElementById(`reason-${proposalId}`).value;
 
-  await fetch(`${API}/api/proposals/${proposalId}/status`, {
+  const res = await fetch(`${API}/api/proposals/${proposalId}/status`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status, client_decision: decision, decision_reason: reason || null }),
   });
-  loadProposals(currentUcc);
+  if (!res.ok) {
+    const err = await res.json();
+    alert(err.error || "Could not update proposal status.");
+    return;
+  }
+  await loadProposals(currentUcc);
 }
 
 async function saveActual(proposalId, recId) {
   const value = document.getElementById(`actual-${recId}`).value;
-  await fetch(`${API}/api/proposals/${proposalId}/recommendations/${recId}/actual`, {
+  const actual = parseFloat(value);
+  if (Number.isNaN(actual) || actual < 0) {
+    alert("Enter a valid non-negative actual amount.");
+    return;
+  }
+  const res = await fetch(`${API}/api/proposals/${proposalId}/recommendations/${recId}/actual`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ actual_amount: parseFloat(value) || 0 }),
+    body: JSON.stringify({ actual_amount: actual }),
   });
-  loadProposals(currentUcc);
+  if (!res.ok) {
+    const err = await res.json();
+    alert(err.error || "Could not save actual investment.");
+    return;
+  }
+  await loadProposals(currentUcc);
 }
 
 async function uploadAttachment(proposalId) {
@@ -842,11 +878,21 @@ async function editLead(leadId) {
   openLeadForm(lead);
 }
 
+function isValidDisplayDate(value) {
+  if (!value) return true;
+  return /^\d{2}-\d{2}-\d{4}$/.test(value);
+}
+
 async function submitLead(editLeadId) {
   const full_name = document.getElementById("new-lead-name").value.trim();
   const phone = document.getElementById("new-lead-phone").value.trim();
   if (!full_name || !phone) {
     alert("Full name and phone are required.");
+    return;
+  }
+  const followup = document.getElementById("new-lead-followup").value.trim();
+  if (!isValidDisplayDate(followup)) {
+    alert("Next follow-up must use dd-mm-yyyy format.");
     return;
   }
   const payload = {
@@ -857,7 +903,7 @@ async function submitLead(editLeadId) {
     assigned_to: document.getElementById("new-lead-assigned").value.trim() || null,
     interested_scheme: document.getElementById("new-lead-scheme").value.trim() || null,
     expected_investment_amount: parseFloat(document.getElementById("new-lead-amount").value) || null,
-    next_follow_up_date: document.getElementById("new-lead-followup").value.trim() || null,
+    next_follow_up_date: followup || null,
   };
 
   const res = await fetch(`${API}/api/leads${editLeadId ? "/" + editLeadId : ""}`, {
