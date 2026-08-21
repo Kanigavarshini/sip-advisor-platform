@@ -319,7 +319,7 @@ def enrich_client_report_row(r, rng: random.Random) -> dict:
         "ucc": r["UCC"],
         "investor_name": r["Investor Name"],
         "holding_type": r["Demat/Physical"],
-        "folio_no": r["Folio No"],
+        "folio_no": _ensure_folio_no(r["Folio No"], r["UCC"], r["Sr.No"]),
         "bank_details": r["Bank Details"],
         "sip_no": _ensure_sip_no(r["SIP No"], r["UCC"], r["Sr.No"]),
         "sip_submission_date": r["SIP Submission Date"],
@@ -428,6 +428,21 @@ def _ensure_sip_no(value, ucc, sr_no) -> str:
     return f"AUTO-{ucc}-{sr_no}"
 
 
+def _ensure_folio_no(value, ucc, sr_no) -> str:
+    """
+    Guarantees a non-blank, non-'-' folio_no for display. Real client
+    reports sometimes leave this blank/'-' for a row -- typically a SIP
+    that was Rejected/Missed before a folio was ever allotted by the AMC.
+    Showing that raw '-' in Client 360 reads as a data bug rather than a
+    real business state, so we replace it with a clear, unambiguous label
+    instead (mirrors _ensure_sip_no's fallback pattern above).
+    """
+    s = str(value).strip()
+    if s and s.lower() not in ("nan", "none", "-"):
+        return s
+    return "Not Allotted"
+
+
 def enrich_row(r, rng: random.Random) -> dict:
     """
     Builds one enriched `sips` row (dict of DB column -> value) from one raw
@@ -451,7 +466,7 @@ def enrich_row(r, rng: random.Random) -> dict:
         "ucc": r["UCC"],
         "investor_name": r["Investor Name"],
         "holding_type": r["Demat/Physical"],
-        "folio_no": r["Folio No"],
+        "folio_no": _ensure_folio_no(r["Folio No"], r["UCC"], r["Sr.No"]),
         "bank_details": r["Bank Details"],
         "sip_no": _ensure_sip_no(r["SIP No"], r["UCC"], r["Sr.No"]),
         "sip_submission_date": r["SIP Submission Date"],

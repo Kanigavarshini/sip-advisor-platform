@@ -309,7 +309,7 @@ async function showClientProfile(ucc) {
             ${c.sips.map(s => `
               <tr>
                 <td>${s.scheme}</td>
-                <td>${s.folio_no}</td>
+                <td>${s.folio_no && s.folio_no !== "-" ? s.folio_no : "Not Allotted"}</td>
                 <td>₹${s.sip_amount}</td>
                 <td>${s.sip_start_date}</td>
                 <td>${s.sip_end_date}</td>
